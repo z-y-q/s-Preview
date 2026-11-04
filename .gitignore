@@ -1,0 +1,16 @@
+# 构建产物
+build/
+
+# 前端依赖（通过 Vendors/build-esbuild.mjs 重新生成）
+Vendors/node_modules/
+
+# 测试输出与临时结果
+TestResults/
+
+# 测试样本与演示文件夹（Tools/make-samples.sh 与 make-demo-folder.sh 可重新生成）
+TestSamples/
+预览演示/
+
+# 系统文件
+.DS_Store
+*.log
