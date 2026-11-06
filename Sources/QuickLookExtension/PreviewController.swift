@@ -283,6 +283,8 @@ extension PreviewController: WKScriptMessageHandler {
             panel.prompt = "解压到此处"
             panel.nameFieldStringValue = url.deletingPathExtension().lastPathComponent
             panel.message = "选择解压目标文件夹，已选 \(paths.count) 个条目"
+            // 浮到 Quick Look 预览窗之上，避免被遮挡
+            panel.level = .modalPanel
             if panel.runModal() == .OK, let dest = panel.url {
                 run(dest: dest)
             } else {

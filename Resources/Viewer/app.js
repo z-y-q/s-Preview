@@ -413,6 +413,10 @@
         body.appendChild(list);
         content.appendChild(body);
 
+        // 双击不再冒泡给系统 Quick Look（避免触发系统整包解压）
+        content.addEventListener('dblclick', (ev) => ev.stopPropagation());
+        content.addEventListener('doubleclick', (ev) => ev.stopPropagation());
+
         const footer = el('div', 'sp-arch-footer');
         const status = el('span', '', '');
         footer.appendChild(status);
@@ -843,7 +847,7 @@
 
     // 原生 → 页面：解压进度与完成（由 Swift 侧注入调用）
     window.SPreview.archiveProgress = function (done, total, current) {
-        updateArchiveFooter('解压中 ' + done + '/' + total + ' · ' + current);
+        updateArchiveFooter('解压中… 已完成 ' + done + ' 个 · ' + current);
     };
     window.SPreview.archiveDone = function (ok, count, info) {
         if (ok) updateArchiveFooter('解压完成：' + count + ' 个文件 → ' + info);
