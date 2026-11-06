@@ -333,7 +333,8 @@
             const isDir = e.f.indexOf('d') >= 0;
             const comps = e.p.split('/');
             let cur = '';
-            for (let i = 0; i < comps.length - (isDir ? 1 : 0); i++) {
+            // 只注册祖先目录层级（文件名本身不是目录）
+            for (let i = 0; i < comps.length - 1; i++) {
                 const next = i === 0 ? comps[0] : cur + '/' + comps[i];
                 if (!A.folders.has(next)) A.folders.set(next, { sub: new Map(), files: [] });
                 if (cur !== '') {
@@ -527,7 +528,7 @@
         }
         const files = f.files.slice().sort((a, b) => a.p.localeCompare(b.p));
         for (const fe of files) {
-            out.push({ isDir: false, name: fe.p.split('/').pop(), entry: fe });
+            out.push({ isDir: false, name: fe.p.split('/').pop(), path: fe.p, entry: fe });
         }
         return out;
     }
@@ -854,4 +855,16 @@
         else if (info === 'cancelled') updateArchiveFooter('已取消');
         else updateArchiveFooter('解压失败：' + info);
     };
+
+    // 环境探针：上报消息桥可用性（解压功能诊断）
+    setTimeout(function () {
+        try {
+            const d = JSON.stringify({
+                webkit: typeof window.webkit,
+                mh: !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.spreview),
+                test: !!window.__SP_TEST__,
+            });
+            fetch('spreview-resource://page/report?c=envprobe&d=' + encodeURIComponent(d)).catch(function () {});
+        } catch (e) { /* 诊断不影响预览 */ }
+    }, 400);
 })();
