@@ -1,7 +1,7 @@
 /* s-Preview 预览页应用：模块渲染 + 主题 + 3D 交互 + 测试自报告 */
 (function () {
     'use strict';
-    window.addEventListener('error', function (e) { window.__SP_ERR__ = String(e.message || e); });
+    window.addEventListener('error', function (e) { window.__SP_ERR__ = String(e.message || e); window.__SP_STACK__ = String((e.error && e.error.stack) || ''); });
 
     const root = () => document.getElementById('sp-root');
 
@@ -257,61 +257,396 @@
         }
     }
 
-    // ---------- 压缩包 ----------
+    // ---------- 压缩包：目录树 + 选择性解压 ----------
+    const A = window.__SP_ARCHIVE__ = window.__SP_ARCHIVE__ || {
+        entries: [], folders: new Map(), filesAt: new Map(), totalsCache: new Map(),
+        current: '', selection: new Set(), expanded: new Set(['']), name: '', total: 0
+    };
+
     function renderArchive(p) {
-        const s = p.settings;
-        const a = p.archive || { entries: [] };
-        const content = el('div', 'sp-content');
-        const chips = [
-            el('span', 'sp-chip', (a.format || 'archive')),
-            el('span', 'sp-chip', a.fileCount + ' 个文件 / ' + a.dirCount + ' 个目录'),
-            el('span', 'sp-chip', '合计 ' + fmtBytes(a.totalSize)),
-        ];
-        if (a.totalCompressed > 0) chips.push(el('span', 'sp-chip', '压缩后 ' + fmtBytes(a.totalCompressed)));
-        if (a.truncated) chips.push(el('span', 'sp-chip', '条目过多，仅显示前 ' + (a.entries || []).length + ' 项'));
+        A.name = p.fileName;
+        A.total = p.fileSize;
+        renderArchiveShell();
+        renderTree();
+        renderBreadcrumb();
+        if (window.__SP_TEST__) {
+            report('archive', { rows: A.entries.length, rendered: A.entries.length > 0, pending: A.entries.length === 0 });
+        }
+    }
+
+    function openFolder(path) {
+        A.current = path;
+        renderBreadcrumb();
+        renderFileList();
+        renderTree();
+    }
+
+    function archiveInit() {
+        fetch('spreview-resource://page/archive.tsv').then((r) => r.text()).then((t) => {
+            A.entries = [];
+            const lines = t.split('\n');
+            for (const line of lines) {
+                if (!line) continue;
+                const c = line.split('\t');
+                if (c.length < 5) continue;
+                let p0 = c[0];
+                while (p0.length > 1 && p0.endsWith('/')) p0 = p0.slice(0, -1);
+                A.entries.push({ p: p0, s: Number(c[1]), cs: Number(c[2]), m: Number(c[3]), f: c[4] });
+            }
+            buildArchiveTree();
+            renderArchiveShell();
+            renderTree();
+            renderBreadcrumb();
+            renderFileList();
+            updateArchiveFooter();
+            if (window.__SP_TEST__) {
+                report('archive', { rows: A.entries.length, rendered: true, treeFolders: A.folders.size });
+            }
+        }).catch((e) => {
+            root().replaceChildren();
+            const panel = el('div', 'sp-error-panel');
+            panel.appendChild(el('div', 'sp-err-title', '清单加载失败'));
+            panel.appendChild(el('div', '', esc(e)));
+            root().appendChild(panel);
+        });
+    }
+
+    function archiveError(msg) {
+        root().replaceChildren();
+        const panel = el('div', 'sp-error-panel');
+        panel.appendChild(el('div', 'sp-err-title', '压缩包解析失败'));
+        panel.appendChild(el('div', '', esc(msg)));
+        root().appendChild(panel);
+    }
+
+    function parentPath(p) {
+        const i = p.lastIndexOf('/');
+        return i < 0 ? '' : p.slice(0, i);
+    }
+
+    function buildArchiveTree() {
+        A.folders = new Map();
+        A.filesAt = new Map();
+        A.totalsCache = new Map();
+        A.folders.set('', { sub: new Map(), files: [] });
+        for (const e of A.entries) {
+            const isDir = e.f.indexOf('d') >= 0;
+            const comps = e.p.split('/');
+            let cur = '';
+            for (let i = 0; i < comps.length - (isDir ? 1 : 0); i++) {
+                const next = i === 0 ? comps[0] : cur + '/' + comps[i];
+                if (!A.folders.has(next)) A.folders.set(next, { sub: new Map(), files: [] });
+                if (cur !== '') {
+                    A.folders.get(cur).sub.set(comps[i], next);
+                }
+                cur = next;
+            }
+            if (isDir) {
+                if (!A.folders.has(e.p)) A.folders.set(e.p, { sub: new Map(), files: [] });
+                const pp = parentPath(e.p);
+                if (A.folders.has(pp)) A.folders.get(pp).sub.set(comps[comps.length - 1], e.p);
+            } else {
+                if (!A.folders.has(cur)) A.folders.set(cur, { sub: new Map(), files: [] });
+                A.folders.get(cur).files.push(e);
+            }
+        }
+        // 子树合计（延迟计算 + 缓存）
+        A.totals = (path) => {
+            if (A.totalsCache.has(path)) return A.totalsCache.get(path);
+            const f = A.folders.get(path) || { sub: new Map(), files: [] };
+            let count = f.files.length;
+            let size = 0;
+            for (const fe of f.files) size += fe.s;
+            f.sub.forEach((child) => {
+                const t = A.totals(child);
+                count += t.count;
+                size += t.size;
+            });
+            const t = { count, size };
+            A.totalsCache.set(path, t);
+            return t;
+        };
+    }
+
+    function renderArchiveShell() {
+        if (A.entries.length === 0) {
+            root().replaceChildren();
+            const panel = el('div', 'sp-loading', '正在解析压缩包清单…');
+            root().appendChild(panel);
+            return;
+        }
+        const content = el('div', 'sp-content sp-arch-content');
         const bar = el('div', 'sp-toolbar');
-        bar.appendChild(el('span', 'sp-title', esc(p.fileName)));
-        bar.appendChild(el('span', 'sp-chip', fmtBytes(p.fileSize)));
-        chips.forEach((c) => bar.appendChild(c));
+        bar.appendChild(el('span', 'sp-title', esc(A.name)));
+        bar.appendChild(el('span', 'sp-chip', fmtBytes(A.total)));
         bar.appendChild(el('span', 'sp-space'));
+        const up = toolbarButton('上级', () => {
+            if (A.current !== '') {
+                A.current = parentPath(A.current);
+                renderBreadcrumb();
+                renderFileList();
+            }
+        });
+        bar.appendChild(up);
+        const selAll = toolbarButton('全选当前', () => {
+            selectAllIn(A.current, true);
+            renderFileList();
+            updateArchiveFooter();
+        });
+        bar.appendChild(selAll);
+        const none = toolbarButton('取消选择', () => {
+            A.selection.clear();
+            renderTree();
+            renderFileList();
+            updateArchiveFooter();
+        });
+        bar.appendChild(none);
         content.appendChild(bar);
 
-        const wrap = el('div', 'sp-archive');
+        const crumb = el('div', 'sp-crumbs');
+        content.appendChild(crumb);
+
+        const body = el('div', 'sp-arch-body');
+        const tree = el('div', 'sp-arch-tree');
+        body.appendChild(tree);
+        const list = el('div', 'sp-arch-list');
+        body.appendChild(list);
+        content.appendChild(body);
+
+        const footer = el('div', 'sp-arch-footer');
+        const status = el('span', '', '');
+        footer.appendChild(status);
+        footer.appendChild(el('span', 'sp-space'));
+        const btn = toolbarButton('解压所选…', () => extractSelected(), false);
+        btn.classList.add('sp-extract-btn');
+        footer.appendChild(btn);
+        content.appendChild(footer);
+        root().replaceChildren(content);
+        A.statusEl = status;
+        A.crumbEl = crumb;
+        updateArchiveFooter('已就绪：' + A.entries.length + ' 个条目');
+    }
+
+    function renderTree() {
+        const tree = root().querySelector('.sp-arch-tree');
+        if (!tree) return;
+        tree.replaceChildren();
+        const rootNode = el('div', 'sp-tree-node sp-root-node');
+        const label = el('span', 'sp-tree-label', esc(A.name || '根目录'));
+        const t = A.totals('');
+        label.title = t.count + ' 个文件';
+        rootNode.appendChild(label);
+        rootNode.addEventListener('click', () => {
+            A.current = '';
+            renderBreadcrumb();
+            renderFileList();
+        });
+        tree.appendChild(rootNode);
+        tree.appendChild(renderTreeChildren('', 1));
+    }
+
+    function renderTreeChildren(path, depth) {
+        const wrap = el('div');
+        const f = A.folders.get(path);
+        if (!f) return wrap;
+        const subs = Array.from(f.sub.keys()).sort();
+        for (const sub of subs) {
+            const childPath = path === '' ? sub : path + '/' + sub;
+            const childFolder = A.folders.get(childPath);
+            if (!childFolder) continue;
+            const node = el('div', 'sp-tree-node');
+            node.style.paddingLeft = (depth * 16 + 8) + 'px';
+            const expanded = A.expanded.has(childPath);
+            const arrow = el('span', 'sp-tree-arrow', childFolder.sub.size > 0 ? (expanded ? '▾' : '▸') : '');
+            const label = el('span', 'sp-tree-label', esc(sub) + '/');
+            node.appendChild(arrow);
+            node.appendChild(label);
+            const t = A.totals(childPath);
+            const badge = el('span', 'sp-tree-badge', String(t.count));
+            badge.title = '子树共 ' + t.count + ' 个文件';
+            node.appendChild(badge);
+            if (A.selection.has(childPath)) node.classList.add('sp-selected');
+            node.addEventListener('click', (ev) => {
+                if (ev.target === arrow) {
+                    if (expanded) A.expanded.delete(childPath);
+                    else A.expanded.add(childPath);
+                    renderTree();
+                    return;
+                }
+                A.current = childPath;
+                A.expanded.add(childPath);
+                renderBreadcrumb();
+                renderFileList();
+                renderTree();
+            });
+            wrap.appendChild(node);
+            if (expanded) {
+                wrap.appendChild(renderTreeChildren(childPath, depth + 1));
+            }
+        }
+        return wrap;
+    }
+
+    function renderBreadcrumb() {
+        const crumb = A.crumbEl;
+        if (!crumb) return;
+        crumb.replaceChildren();
+        const segs = A.current === '' ? [] : A.current.split('/');
+        const home = el('span', 'sp-crumb-item', esc(A.name || '根目录'));
+        home.addEventListener('click', () => {
+            A.current = '';
+            renderBreadcrumb();
+            renderFileList();
+        });
+        crumb.appendChild(home);
+        let acc = '';
+        for (const s of segs) {
+            acc = acc === '' ? s : acc + '/' + s;
+            crumb.appendChild(el('span', 'sp-crumb-sep', '›'));
+            const item = el('span', 'sp-crumb-item' + (acc === A.current ? ' sp-crumb-cur' : ''), esc(s));
+            const path = acc;
+            item.addEventListener('click', () => {
+                A.current = path;
+                renderBreadcrumb();
+                renderFileList();
+            });
+            crumb.appendChild(item);
+        }
+    }
+
+    function childrenOf(path) {
+        const f = A.folders.get(path) || { sub: new Map(), files: [] };
+        const out = [];
+        const subs = Array.from(f.sub.keys()).sort();
+        for (const s of subs) {
+            out.push({ isDir: true, name: s, path: path === '' ? s : path + '/' + s });
+        }
+        const files = f.files.slice().sort((a, b) => a.p.localeCompare(b.p));
+        for (const fe of files) {
+            out.push({ isDir: false, name: fe.p.split('/').pop(), entry: fe });
+        }
+        return out;
+    }
+
+    function renderFileList() {
+        const list = root().querySelector('.sp-arch-list');
+        if (!list) return;
+        list.replaceChildren();
         const table = el('table');
         const thead = el('thead');
         const hr = el('tr');
+        hr.appendChild(el('th', 'sp-col-check', ''));
         hr.appendChild(el('th', '', '名称'));
         hr.appendChild(el('th', 'num', '大小'));
-        if (s.archiveShowCompressed) hr.appendChild(el('th', 'num', '压缩后'));
-        if (s.archiveShowDate) hr.appendChild(el('th', '', '修改时间'));
-        if (s.archiveShowPermissions) hr.appendChild(el('th', '', '权限'));
+        hr.appendChild(el('th', 'num', '压缩后'));
+        hr.appendChild(el('th', '', '修改时间'));
         thead.appendChild(hr);
         table.appendChild(thead);
         const tbody = el('tbody');
-        (a.entries || []).forEach((e) => {
-            const tr = el('tr', e.isDirectory ? 'sp-dir-row' : '');
-            const depth = (e.path.match(/\//g) || []).length;
-            const indent = '&nbsp;&nbsp;&nbsp;'.repeat(depth);
-            const icon = e.isDirectory ? '<span class="sp-dir-icon">▸</span> ' : '';
-            const base = e.path.split('/').pop() || e.path;
-            const pathTd = el('td', 'sp-path', indent + icon + esc(e.isDirectory ? base + '/' : base));
-            if (e.isEncrypted) pathTd.innerHTML += ' <span title="加密">🔒</span>';
-            tr.appendChild(pathTd);
-            if (!e.isDirectory) tr.appendChild(el('td', 'num', fmtBytes(e.size)));
-            else tr.appendChild(el('td', 'num', '—'));
-            if (s.archiveShowCompressed) tr.appendChild(el('td', 'num', e.isDirectory ? '—' : fmtBytes(e.compressedSize)));
-            if (s.archiveShowDate) tr.appendChild(el('td', '', fmtDate(e.mtime)));
-            if (s.archiveShowPermissions) tr.appendChild(el('td', '', ''));
+        for (const item of childrenOf(A.current)) {
+            const tr = el('tr', item.isDir ? 'sp-dir-row' : '');
+            const checked = A.selection.has(item.path);
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.checked = checked;
+            cb.addEventListener('change', () => {
+                if (cb.checked) A.selection.add(item.path);
+                else A.selection.delete(item.path);
+                tr.classList.toggle('sp-row-selected', cb.checked);
+                updateArchiveFooter();
+            });
+            const checkTd = el('td', 'sp-col-check');
+            checkTd.appendChild(cb);
+            tr.appendChild(checkTd);
+            const icon = item.isDir
+                ? '<svg viewBox="0 0 16 16" class="sp-fi sp-fi-dir"><path d="M1.5 3.5h4.6l1.4 1.6h7.4v7.9a1 1 0 0 1-1 1h-11.9a1 1 0 0 1-1-1v-8.5a1 1 0 0 1 1-1z"/></svg>'
+                : '<svg viewBox="0 0 16 16" class="sp-fi sp-fi-file"><path d="M4 1.5h5.2L12.5 4.8v9.7a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-12a1 1 0 0 1 1-1z"/><path d="M9.2 1.5v3.3h3.3" class="sp-fi-fold"/></svg>';
+            const nameTd = el('td', 'sp-name');
+            const inner = el('span', 'sp-name-inner');
+            inner.innerHTML = icon + ' <span>' + esc(item.name) + (item.isDir ? '/' : '') + '</span>';
+            nameTd.appendChild(inner);
+            if (item.isDir) {
+                nameTd.addEventListener('dblclick', () => {
+                    A.current = item.path;
+                    A.expanded.add(item.path);
+                    renderBreadcrumb();
+                    renderFileList();
+                    renderTree();
+                });
+                nameTd.addEventListener('click', () => {
+                    A.current = item.path;
+                    A.expanded.add(item.path);
+                    renderBreadcrumb();
+                    renderFileList();
+                    renderTree();
+                });
+                nameTd.classList.add('sp-clickable');
+            }
+            tr.appendChild(nameTd);
+            if (item.isDir) {
+                const t = A.totals(item.path);
+                tr.appendChild(el('td', 'num', t.count + ' 个文件'));
+                tr.appendChild(el('td', 'num', '—'));
+                tr.appendChild(el('td', '', '—'));
+            } else {
+                const e = item.entry;
+                tr.appendChild(el('td', 'num', fmtBytes(e.s)));
+                tr.appendChild(el('td', 'num', fmtBytes(e.cs)));
+                tr.appendChild(el('td', '', fmtDate(e.m) + (e.f.indexOf('e') >= 0 ? ' 🔒' : '')));
+            }
+            if (checked) tr.classList.add('sp-row-selected');
             tbody.appendChild(tr);
-        });
-        table.appendChild(tbody);
-        wrap.appendChild(table);
-        content.appendChild(wrap);
-        root().replaceChildren(content);
-
-        if (p.test) {
-            report('archive', { rows: (a.entries || []).length, files: a.fileCount, dirs: a.dirCount, format: a.format, total: a.totalSize, rendered: true });
         }
+        table.appendChild(tbody);
+        list.appendChild(table);
+    }
+
+    function selectAllIn(path, on) {
+        const f = A.folders.get(path) || { sub: new Map(), files: [] };
+        for (const fe of f.files) {
+            if (on) A.selection.add(fe.p);
+            else A.selection.delete(fe.p);
+        }
+        f.sub.forEach((child) => selectAllIn(child, on));
+    }
+
+    function selectionSummary() {
+        let files = 0, size = 0, dirs = 0;
+        for (const p of A.selection) {
+            if (A.folders.has(p)) {
+                dirs += 1;
+                const t = A.totals(p);
+                files += t.count;
+                size += t.size;
+            } else {
+                files += 1;
+                const e = A.entries.find((x) => x.p === p);
+                if (e) size += e.s;
+            }
+        }
+        return { files, size, dirs };
+    }
+
+    function updateArchiveFooter(msg) {
+        if (A.statusEl) {
+            if (msg) {
+                A.statusEl.textContent = msg;
+            } else {
+                const sum = selectionSummary();
+                A.statusEl.textContent = '已选 ' + sum.files + ' 个文件' + (sum.dirs ? '（含 ' + sum.dirs + ' 个文件夹）' : '') + ' · ' + fmtBytes(sum.size);
+            }
+        }
+    }
+
+    function extractSelected() {
+        if (A.selection.size === 0) {
+            updateArchiveFooter('请先勾选要解压的文件或文件夹');
+            return;
+        }
+        const auto = !!window.__SP_TEST__;
+        window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.spreview
+            && window.webkit.messageHandlers.spreview.postMessage({ action: 'extract', paths: Array.from(A.selection), auto: auto });
+        updateArchiveFooter('解压中…');
     }
 
     // ---------- 图片 ----------
@@ -504,5 +839,15 @@
         }
     }
 
-    window.SPreview = { render: render };
+    window.SPreview = { render: render, archiveInit: archiveInit, archiveError: archiveError };
+
+    // 原生 → 页面：解压进度与完成（由 Swift 侧注入调用）
+    window.SPreview.archiveProgress = function (done, total, current) {
+        updateArchiveFooter('解压中 ' + done + '/' + total + ' · ' + current);
+    };
+    window.SPreview.archiveDone = function (ok, count, info) {
+        if (ok) updateArchiveFooter('解压完成：' + count + ' 个文件 → ' + info);
+        else if (info === 'cancelled') updateArchiveFooter('已取消');
+        else updateArchiveFooter('解压失败：' + info);
+    };
 })();

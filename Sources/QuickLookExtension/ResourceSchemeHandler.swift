@@ -4,10 +4,12 @@ import WebKit
 // 自定义协议：同源提供页面资源、预览目标文件字节与自检报告回收
 final class ResourceSchemeHandler: NSObject, WKURLSchemeHandler {
     let fileURL: URL
+    weak var archiveSession: ArchiveSession?
     static let scheme = "spreview-resource"
 
-    init(fileURL: URL) {
+    init(fileURL: URL, archiveSession: ArchiveSession? = nil) {
         self.fileURL = fileURL
+        self.archiveSession = archiveSession
         super.init()
     }
 
@@ -55,6 +57,16 @@ final class ResourceSchemeHandler: NSObject, WKURLSchemeHandler {
                 } catch {
                     urlSchemeTask.didFailWithError(error)
                 }
+                return
+            }
+            // 压缩包树形清单（TSV）
+            if url.path == "/archive.tsv" {
+                guard let session = archiveSession else {
+                    urlSchemeTask.didFailWithError(NSError(domain: Self.scheme, code: 404))
+                    return
+                }
+                let tsv = session.currentTSV()
+                respond(task: urlSchemeTask, url: url, data: Data(tsv.utf8), mime: "text/plain")
                 return
             }
             if url.path == "/report" {

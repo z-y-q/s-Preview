@@ -28,6 +28,7 @@ swiftc -O -module-name SPreviewQuickLook \
     -Xlinker -rpath -Xlinker "@executable_path/../Frameworks" \
     -Xlinker -e -Xlinker _NSExtensionMain \
     "$KIT/SettingsStore.swift" "$KIT/UTIRouter.swift" "$KIT/Payload.swift" "$KIT/ContentReader.swift" "$KIT/NotebookParser.swift" "$KIT/ArchiveLister.swift" \
+    "$EXT/ArchiveSession.swift" \
     "$EXT/PreviewController.swift" "$EXT/HLJSAliases.swift" "$EXT/ResourceSchemeHandler.swift" \
     -o "$APP/Contents/PlugIns/s-Preview.QuickLook.appex/Contents/MacOS/s-Preview.QuickLook"
 

@@ -4,10 +4,30 @@ import Clibarchive
 // 压缩包清单：基于 libarchive 的统一读取（zip/tar/gz/7z/rar/bz2/xz）
 public enum ArchiveLister {
     static let maxEntries = 5000
+    public static let maxTreeEntries = 200_000
     // archive_entry.h 中的文件类型宏（Swift 不导入 C 宏，这里按八进制值定义）
     static let AE_IFDIR: UInt32 = 0o40000
 
     public static func list(url: URL) throws -> ArchiveInfoLite {
+        try list(url: url, maxEntries: Self.maxEntries)
+    }
+
+    // 树形浏览用：更大的条目上限 + 紧凑 TSV（路径、大小、压缩后、修改时间、标志）
+    public static func listTree(url: URL) throws -> (info: ArchiveInfoLite, tsv: String) {
+        var full = try list(url: url, maxEntries: Self.maxTreeEntries)
+        if full.entries.count >= Self.maxTreeEntries {
+            full.truncated = true
+        }
+        var lines: [String] = []
+        lines.reserveCapacity(full.entries.count)
+        for e in full.entries {
+            let flag = e.isDirectory ? "d" : (e.isEncrypted ? "de" : "-")
+            lines.append("\(e.path)\t\(e.size)\t\(e.compressedSize)\t\(Int(e.mtime))\t\(flag)")
+        }
+        return (full, lines.joined(separator: "\n"))
+    }
+
+    public static func list(url: URL, maxEntries: Int) throws -> ArchiveInfoLite {
         let a = archive_read_new()
         defer { archive_read_free(a) }
         archive_read_support_format_all(a)

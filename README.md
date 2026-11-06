@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | 代码与文本 | 100 多种扩展名 + `README` `Podfile` `Gemfile` `LICENSE` 等特殊文件名 | 语法高亮、行号、九套主题、暗色跟随、字号/制表符/换行 |
 | 文档 | Markdown、Jupyter Notebook | GFM 表格、代码块高亮、KaTeX 数学公式、单元格与输出渲染 |
-| 压缩包 | zip、tar、tar.gz、7z、rar、gz、bz2、xz | 内容清单、大小/压缩比/时间、目录树、加密标记 |
+| 压缩包 | zip、tar、tar.gz、7z、rar、gz、bz2、xz | 左侧目录树 + 右侧文件列表、勾选后按所选解压（面板选目标文件夹）、大小/压缩比/时间、加密标记、Zip-Slip 防护 |
 | 图片 | webp、avif、heic、tiff、bmp | 尺寸、格式、位深、DPI、动图标记 |
 | 三维模型 | glb、gltf、obj、stl、ply、dae、fbx、usdz | 交互渲染、实心/线框/点云、包围盒、骨架、动画播放、统计面板 |
 | 兜底 | 其余 `public.data` 文件 | 文件信息卡 + 十六进制转储；文本类自动按代码渲染 |
@@ -29,9 +29,11 @@
 
 ![Notebook](docs/screenshots/notebook.png)
 
-### 压缩包清单
+### 压缩包（目录树 + 选择性解压）
 
 ![压缩包](docs/screenshots/archive.png)
+
+对文件与文件夹勾选后点「解压所选…」，在弹出的面板里选择目标文件夹即可解压；文件夹按整个子树展开，带 Zip-Slip 路径防护。
 
 ### 图片信息条
 

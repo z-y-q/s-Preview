@@ -83,8 +83,14 @@ guard FileManager.default.fileExists(atPath: htmlURL.path) else {
     exit(1)
 }
 
+var archiveSession: ArchiveSession? = nil
+if payload.module == "archive" {
+    let s = ArchiveSession(url: file)
+    s.loadTree()
+    archiveSession = s
+}
 let cfg = WKWebViewConfiguration()
-cfg.setURLSchemeHandler(ResourceSchemeHandler(fileURL: file), forURLScheme: ResourceSchemeHandler.scheme)
+cfg.setURLSchemeHandler(ResourceSchemeHandler(fileURL: file, archiveSession: archiveSession), forURLScheme: ResourceSchemeHandler.scheme)
 let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 1200, height: 800), configuration: cfg)
 
 let payloadJSON = String(data: try! JSONEncoder().encode(payload), encoding: .utf8)!
@@ -110,11 +116,17 @@ final class NavDummy: NSObject, WKNavigationDelegate {
 let nav = NavDummy()
 web.navigationDelegate = nav
 nav.onDone = {
-    web.evaluateJavaScript("window.__SP_PAGE_READY__ = true; 'ok'") { _, _ in }
-    web.evaluateJavaScript("SPreview.render(\(payloadJSON));") { _, err in
-        if let err = err {
-            print("{\"FAIL\": \"inject: \(err.localizedDescription)\"}")
-            exit(1)
+    web.evaluateJavaScript("JSON.stringify([typeof SPreview, typeof hljs, typeof marked, typeof katex, typeof SPreview3D, window.__SP_ERR__, document.scripts.length, Array.from(document.scripts).map(function(s){return s.src.split('/').pop() + ':' + (s.src === '' ? 'inline-ok' : 'loaded')})])") { result, err in
+        FileHandle.standardError.write(Data("page_state=\(result ?? "\"eval-fail\"")\n".utf8))
+    }
+    let wrapped = "(function(){ try { SPreview.render(\(payloadJSON)); return 'ok'; } catch (e) { window.__SP_ERR__ = ((e && e.message) || String(e)) + ' | ' + ((e && e.stack) || ''); return 'throw'; } })()"
+    web.evaluateJavaScript(wrapped) { result, err in
+        let r = (result as? String) ?? (err != nil ? "eval-fail: \(err!.localizedDescription)" : "nil")
+        FileHandle.standardError.write(Data("render_result=\(r.prefix(200))\n".utf8))
+        if payload.module == "archive" && r == "ok" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                web.evaluateJavaScript("SPreview.archiveInit();") { _, _ in }
+            }
         }
     }
 }
