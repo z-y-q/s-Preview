@@ -91,6 +91,27 @@ if payload.module == "archive" {
 }
 let cfg = WKWebViewConfiguration()
 cfg.setURLSchemeHandler(ResourceSchemeHandler(fileURL: file, archiveSession: archiveSession), forURLScheme: ResourceSchemeHandler.scheme)
+final class Bridge: NSObject, WKScriptMessageHandler {
+    let session: ArchiveSession?
+    init(session: ArchiveSession?) { self.session = session }
+    func userContentController(_ ucc: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let body = message.body as? [String: Any],
+              body["action"] as? String == "extract",
+              let paths = body["paths"] as? [String] else {
+            FileHandle.standardError.write(Data("BRIDGE recv (rejected)\n".utf8)); return
+        }
+        FileHandle.standardError.write(Data("BRIDGE recv extract paths=\(paths.count)\n".utf8))
+        guard let session = session, let dest = ProcessInfo.processInfo.environment["SP_EXTRACT_DEST"] else { return }
+        do {
+            let n = try ArchiveSession.extract(url: session.url, selected: Set(paths), dest: URL(fileURLWithPath: dest)) { _, _, _ in }
+            FileHandle.standardError.write(Data("BRIDGE extracted=\(n)\n".utf8))
+        } catch {
+            FileHandle.standardError.write(Data("BRIDGE extract error \(error)\n".utf8))
+        }
+    }
+}
+let bridge = Bridge(session: archiveSession)
+cfg.userContentController.add(bridge, name: "spreview")
 let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 1200, height: 800), configuration: cfg)
 
 let payloadJSON = String(data: try! JSONEncoder().encode(payload), encoding: .utf8)!
@@ -126,6 +147,16 @@ nav.onDone = {
         if payload.module == "archive" && r == "ok" {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 web.evaluateJavaScript("SPreview.archiveInit();") { _, _ in }
+                if ProcessInfo.processInfo.environment["SP_EXTRACT_DEST"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                        web.evaluateJavaScript("var cb = document.querySelector('.sp-arch-list input[type=checkbox]'); if (cb) { cb.click(); } 'checked'") { _, _ in }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            web.evaluateJavaScript("document.querySelector('.sp-extract-btn').click(); 'clicked'") { result, err in
+                                FileHandle.standardError.write(Data("click=\(result ?? (err?.localizedDescription ?? "?"))\n".utf8))
+                            }
+                        }
+                    }
+                }
             }
         }
     }

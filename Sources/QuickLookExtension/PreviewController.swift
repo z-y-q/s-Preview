@@ -231,11 +231,16 @@ extension PreviewController: WKNavigationDelegate {
 extension PreviewController: WKScriptMessageHandler {
     func userContentController(_ userContentController: WKUserContentController,
                                didReceive message: WKScriptMessage) {
+        Self.debugLog("MSG_RECV name=\(message.name)")
         guard message.name == "spreview",
               let body = message.body as? [String: Any],
               body["action"] as? String == "extract",
-              let paths = body["paths"] as? [String], !paths.isEmpty else { return }
+              let paths = body["paths"] as? [String], !paths.isEmpty else {
+            Self.debugLog("MSG_REJECTED body=\(String(describing: message.body))")
+            return
+        }
         let auto = body["auto"] as? Bool ?? false
+        Self.debugLog("EXTRACT_REQUESTED entries=\(paths.count) auto=\(auto)")
         startExtraction(paths: Set(paths), auto: auto)
     }
 
