@@ -37,6 +37,7 @@ final class PreviewController: NSViewController, QLPreviewingController {
                 // 压缩包：后台解析清单（大压缩包可达数秒），完成后加载页面
                 let session = ArchiveSession(url: url)
                 self.archiveSession = session
+                self.payload = try buildPayload(url: url, kind: kind)
                 handler(nil)
                 DispatchQueue.global(qos: .userInitiated).async {
                     session.loadTree()
@@ -197,11 +198,14 @@ extension PreviewController: WKNavigationDelegate {
             Self.debugLog("ENCODE_FAIL")
             return
         }
-        webView.evaluateJavaScript("SPreview.render(\(json));") { _, err in
+        // 包装 try/catch：内容触发的异常显示错误面板并记录详情，避免白屏
+        let wrapped = "(function(){ try { SPreview.render(\(json)); return 'ok'; } catch (e) { window.__SP_ERR__ = ((e && e.message) || String(e)) + ' | ' + ((e && e.stack) || ''); return 'throw'; } })()"
+        webView.evaluateJavaScript(wrapped) { result, err in
             if let err = err {
                 Self.debugLog("INJECT_FAIL \(err.localizedDescription)")
             } else {
-                Self.debugLog("INJECT_OK")
+                let r = (result as? String) ?? "?"
+                Self.debugLog(r == "ok" ? "INJECT_OK" : "INJECT_THROW \(r.prefix(300))")
             }
         }
         if self.pendingArchiveInit {
