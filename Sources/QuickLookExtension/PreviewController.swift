@@ -278,13 +278,25 @@ extension PreviewController: WKScriptMessageHandler {
             }
         }
 
-        // 解压到「下载」文件夹（沙箱权利明确允许，无需面板）
-        let downloads = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Downloads")
-        let baseName = url.deletingPathExtension().lastPathComponent
-        let stamp = Self.timeFormatter.string(from: Date())
-        let dir = downloads.appendingPathComponent("\(baseName)-解压-\(stamp)")
-        Self.debugLog("EXTRACT_START dest=\(dir.path) entries=\(paths.count)")
-        run(dest: dir)
+        // 主路径：面板选择目标文件夹（用户选择即授予写权限，沙箱标准方式）
+        // 备用：面板不可用时直写「下载」文件夹
+        DispatchQueue.main.async {
+            let panel = NSOpenPanel()
+            panel.canChooseDirectories = true
+            panel.canChooseFiles = false
+            panel.canCreateDirectories = true
+            panel.prompt = "解压到此处"
+            panel.nameFieldStringValue = url.deletingPathExtension().lastPathComponent
+            panel.message = "选择解压目标文件夹，已选 \(paths.count) 个条目"
+            // 浮到 Quick Look 预览窗之上，避免被遮挡
+            panel.level = .modalPanel
+            if panel.runModal() == .OK, let dest = panel.url {
+                Self.debugLog("EXTRACT_PANEL_OK dest=\(dest.path)")
+                run(dest: dest)
+            } else {
+                Self.debugLog("EXTRACT_PANEL_CANCELLED")
+                web?.evaluateJavaScript("SPreview.archiveDone(false,0,'cancelled');", completionHandler: nil)
+            }
+        }
     }
 }
