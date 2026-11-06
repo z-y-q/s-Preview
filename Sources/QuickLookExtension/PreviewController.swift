@@ -239,6 +239,12 @@ extension PreviewController: WKScriptMessageHandler {
         startExtraction(paths: Set(paths), auto: auto)
     }
 
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HHmmss"
+        return f
+    }()
+
     private func startExtraction(paths: Set<String>, auto: Bool) {
         guard let url = fileURL else { return }
         let web = webView
@@ -267,29 +273,13 @@ extension PreviewController: WKScriptMessageHandler {
             }
         }
 
-        if auto {
-            // 自检模式：免面板，解压到扩展容器临时目录
-            let dir = FileManager.default.temporaryDirectory
-                .appendingPathComponent("spreview-extract-\(Int(Date().timeIntervalSince1970))")
-            run(dest: dir)
-            return
-        }
-
-        DispatchQueue.main.async {
-            let panel = NSOpenPanel()
-            panel.canChooseDirectories = true
-            panel.canChooseFiles = false
-            panel.canCreateDirectories = true
-            panel.prompt = "解压到此处"
-            panel.nameFieldStringValue = url.deletingPathExtension().lastPathComponent
-            panel.message = "选择解压目标文件夹，已选 \(paths.count) 个条目"
-            // 浮到 Quick Look 预览窗之上，避免被遮挡
-            panel.level = .modalPanel
-            if panel.runModal() == .OK, let dest = panel.url {
-                run(dest: dest)
-            } else {
-                web?.evaluateJavaScript("SPreview.archiveDone(false,0,'cancelled');", completionHandler: nil)
-            }
-        }
+        // 解压到「下载」文件夹（沙箱权利明确允许，无需面板）
+        let downloads = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Downloads")
+        let baseName = url.deletingPathExtension().lastPathComponent
+        let stamp = Self.timeFormatter.string(from: Date())
+        let dir = downloads.appendingPathComponent("\(baseName)-解压-\(stamp)")
+        Self.debugLog("EXTRACT_START dest=\(dir.path) entries=\(paths.count)")
+        run(dest: dir)
     }
 }
